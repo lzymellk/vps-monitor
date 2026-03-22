@@ -1,0 +1,7 @@
+CREATE TABLE vps_nodes ( id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, billing_cycle TEXT, currency TEXT, price REAL, billing_timezone TEXT, expire_date TEXT, cpu_usage REAL, memory_usage REAL, disk_usage REAL, token TEXT, memory_total REAL, disk_total REAL, network_rx_bytes BIGINT, network_tx_bytes BIGINT, network_rx_speed REAL, network_tx_speed REAL, uptime_seconds BIGINT, country_code TEXT, country_name TEXT, os TEXT, status TEXT DEFAULT 'unknown', last_check TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);
+CREATE UNIQUE INDEX idx_vps_nodes_token ON vps_nodes(token);
+CREATE TABLE users ( id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP );
+CREATE TABLE sessions ( id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT UNIQUE NOT NULL, user_id INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, expires_at TIMESTAMP NOT NULL, FOREIGN KEY (user_id) REFERENCES users(id) );
+CREATE INDEX idx_sessions_session_id ON sessions(session_id);
+CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);
+INSERT INTO users (username, password_hash) VALUES ('admin', 'pbkdf2:sha256:100000:e32e7a9859f3b3cffbb8c30160e0b7ac:609980c4b9b7f0fbf726249f5e65fcdb338c165a8fcaeba90abf728200b1ecc0');
