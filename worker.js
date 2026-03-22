@@ -1824,7 +1824,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
         window.closeModal = closeModal;
         
         fetchNodes();
-        setInterval(fetchNodes, 5000);
+        setInterval(fetchNodes, 2000);
     </script>
 </body>
 </html>`;
@@ -1890,7 +1890,7 @@ function handleDeployScript(request, env) {
 set -e
 
 # 参数配置
-INTERVAL=5
+INTERVAL=1
 WORKER_URL="${workerUrl}"
 TOKEN="${token}"
 
@@ -1901,7 +1901,7 @@ cd /opt/vps-reporter
 # 写入上报脚本
 cat > reporter.sh << 'INNER_EOF'
 #!/bin/bash
-INTERVAL=5
+INTERVAL=1
 WORKER_URL="${workerUrl}"
 TOKEN="${token}"
 
