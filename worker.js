@@ -1156,7 +1156,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
                     <hr>
                     <div>
                         <strong>📡 上报配置</strong><br>
-                        <span style="font-size: 12px;">将此命令复制到您的 VPS 上执行，将自动安装上报服务（每5秒上报一次）：</span>
+                        <span style="font-size: 12px;">将此命令复制到您的 VPS 上执行，将自动安装上报服务（每2秒上报一次）：</span>
                         <div style="background: #0f172a; padding: 8px; border-radius: 6px; margin: 8px 0; display: flex; justify-content: space-between; align-items: center;">
                             <code id="deploy-command" style="color: #60a5fa; word-break: break-all;"></code>
                             <button type="button" onclick="copyDeployCommand()" class="btn btn-secondary" style="padding: 4px 8px; margin-left: 8px;">复制</button>
