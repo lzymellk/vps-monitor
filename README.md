@@ -6,3 +6,5 @@
 5、打开刚刚创建的worker，点击右上角的"编辑代码"按钮，将worker.js复制到代码框，点击右上角的"部署"按钮；
 6、打开刚刚创建的worker，点击上方菜单的"设置"标签，添加"触发事件"，选择"Cron触发器"，执行频率选择1分钟，点击"添加"按钮；
 7、复制设置界面的workers.dev值，打开该网址，点击右上角的登录按钮，登录后可自行修改密码。
+国内访问workers：
+https://langliu.github.io/posts/cloudflare-workers-in-china/
