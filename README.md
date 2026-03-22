@@ -7,4 +7,6 @@
 6、打开刚刚创建的worker，点击上方菜单的"设置"标签，添加"触发事件"，选择"Cron触发器"，执行频率选择1分钟，点击"添加"按钮；
 7、复制设置界面的workers.dev值，打开该网址，点击右上角的登录按钮，登录后可自行修改密码。
 国内访问workers：
-https://langliu.github.io/posts/cloudflare-workers-in-china/
+1、在cloudflare域中选择一个已绑定的域名，配置DNS，添加记录，类型选择CNAME，名称自行定义，内容填写CF优选域名（例如：www.cloudflare.19931110.xyz），点击保存
+2、打开刚刚创建的worker，点击上方菜单的"设置"标签，添加"域和路由"，选择区域，配置路由。如域名为xxx.com，DNS名称为www，路由可以填"www.xxx.com/*"
+3、使用刚刚配置的路由地址，访问vps-monitor
