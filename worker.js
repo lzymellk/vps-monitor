@@ -13,8 +13,10 @@ export default {
       return handleLoginApi(request, env);
     } else if (path === '/api/logout') {
       return handleLogout(request, env);
-    } else if (path === '/api/nodes' && method === 'GET') {
-      return handleGetNodes(request, env);
+    } else if (path === '/ws') {
+      return handleWebSocket(request, env, ctx);
+    } else if (path === '/api/nodes-stream' && method === 'GET') {
+      return handleNodesStream(request, env);
     } else if (path === '/api/nodes' && method === 'POST') {
       return handleAddNode(request, env);
     } else if (path.startsWith('/api/nodes/') && method === 'DELETE') {
@@ -25,15 +27,11 @@ export default {
       return handleUpdateNode(request, env, id);
     } else if (path === '/deploy-agent' && method === 'GET') {
       return handleDeployScript(request, env);
-    } else if (path === '/api/report' && method === 'POST') {
-      return handleReport(request, env);
     } else if (path.startsWith('/api/node-token/') && method === 'GET') {
       const id = path.split('/')[3];
       return handleGetNodeToken(request, env, id);
     } else if (path === '/api/change-password' && method === 'POST') {
-        return handleChangePassword(request, env);
-    } else if (path === '/api/init-admin' && method === 'POST') {
-        return initAdminUser(env);
+      return handleChangePassword(request, env);
     }
 
     return new Response('Not Found', { status: 404 });
@@ -1200,6 +1198,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
     
     <script>
         let nodes = [];
+        let eventSource = null;
         const IS_LOGGED_IN = ${isLoggedIn};
         
         async function fetchNodes() {
@@ -1720,6 +1719,38 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
         function closeModal() {
             document.getElementById('nodeModal').style.display = 'none';
         }
+
+        function initSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+            
+            eventSource = new EventSource('/api/nodes-stream');
+            
+            eventSource.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                nodes = data.results || data;
+                renderNodes();
+                updateStats();
+            };
+            
+            eventSource.onerror = (err) => {
+                console.error('SSE 连接错误:', err);
+                eventSource.close();
+                // 5秒后重连
+                setTimeout(initSSE, 5000);
+            };
+        }
+
+        // 页面加载时启动 SSE
+        initSSE();
+
+        // 页面关闭时清理
+        window.addEventListener('beforeunload', () => {
+        if (eventSource) {
+            eventSource.close();
+        }
+        });
         
         document.getElementById('nodeForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -1822,9 +1853,6 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
         };
         window.deleteNode = deleteNode;
         window.closeModal = closeModal;
-        
-        fetchNodes();
-        setInterval(fetchNodes, 2000);
     </script>
 </body>
 </html>`;
@@ -1832,14 +1860,51 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
 }
 
 // API 路由实现
-async function handleGetNodes(request, env) {
-    const nodes = await env.DB.prepare(`
-        SELECT id, name, status, os, cpu_usage, memory_usage, disk_usage, memory_total, disk_total,
+async function handleNodesStream(request, env) {
+  // 设置 SSE 响应头
+  const headers = {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  };
+
+  const encoder = new TextEncoder();
+  let intervalId;
+
+  const stream = new ReadableStream({
+    start(controller) {
+      // 立即发送当前数据
+      const sendData = async () => {
+        try {
+          const nodes = await getNodes(env);
+          const data = `data: ${JSON.stringify(nodes)}\n\n`;
+          controller.enqueue(encoder.encode(data));
+        } catch (err) {
+          console.error('获取节点数据失败:', err);
+        }
+      };
+
+      sendData();
+
+      // 每 30 秒推送一次更新
+      intervalId = setInterval(sendData, 2000);
+    },
+    cancel() {
+      if (intervalId) clearInterval(intervalId);
+    }
+  });
+
+  return new Response(stream, { headers });
+}
+
+async function getNodes(env) {
+  return await env.DB.prepare(`
+    SELECT id, name, status, os, cpu_usage, memory_usage, disk_usage, memory_total, disk_total,
                network_rx_bytes, network_tx_bytes, network_rx_speed, network_tx_speed, uptime_seconds,
                billing_cycle, currency, price, billing_timezone, expire_date, country_code
         FROM vps_nodes ORDER BY expire_date DESC
-    `).all();
-    return Response.json(nodes.results);
+  `).all();
 }
 
 async function handleAddNode(request, env) {
@@ -1884,26 +1949,105 @@ function handleDeployScript(request, env) {
     return new Response('缺少 token 参数', { status: 400 });
   }
   const host = request.headers.get('Host');
-  const workerUrl = `https://${host}/api/report`;
+  const wsUrl = `wss://${host}/ws?token=${token}`;
 
   const script = `#!/bin/bash
 set -e
 
-# 参数配置
-INTERVAL=1
-WORKER_URL="${workerUrl}"
-TOKEN="${token}"
+# 检测并安装 websocat
+install_websocat() {
+    if command -v websocat &> /dev/null; then
+        echo "websocat 已安装"
+        return 0
+    fi
+    
+    echo "正在安装 websocat..."
+    
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+    else
+        echo "无法检测操作系统"
+        exit 1
+    fi
+    
+    case "$OS" in
+        ubuntu|debian)
+            ARCH=$(uname -m)
+            case "$ARCH" in
+                x86_64)  ARCH="x86_64" ;;
+                aarch64) ARCH="aarch64" ;;
+                armv7l)  ARCH="armv7" ;;
+                *)       ARCH="x86_64" ;;
+            esac
+            URL="https://github.com/vi/websocat/releases/download/v1.12.0/websocat.\${ARCH}-unknown-linux-musl"
+            wget -O /usr/local/bin/websocat "$URL"
+            chmod +x /usr/local/bin/websocat
+            ;;
+        centos|rhel|fedora)
+            if command -v cargo &> /dev/null; then
+                cargo install websocat
+            else
+                ARCH=$(uname -m)
+                case "$ARCH" in
+                    x86_64)  ARCH="x86_64" ;;
+                    aarch64) ARCH="aarch64" ;;
+                    *)       ARCH="x86_64" ;;
+                esac
+                URL="https://github.com/vi/websocat/releases/download/v1.12.0/websocat.\${ARCH}-unknown-linux-musl"
+                curl -L -o /usr/local/bin/websocat "$URL"
+                chmod +x /usr/local/bin/websocat
+            fi
+            ;;
+        alpine)
+            apk add --no-cache websocat
+            ;;
+        *)
+            ARCH=$(uname -m)
+            case "$ARCH" in
+                x86_64)  ARCH="x86_64" ;;
+                aarch64) ARCH="aarch64" ;;
+                armv7l)  ARCH="armv7" ;;
+                *)       ARCH="x86_64" ;;
+            esac
+            URL="https://github.com/vi/websocat/releases/download/v1.12.0/websocat.\${ARCH}-unknown-linux-musl"
+            curl -L -o /usr/local/bin/websocat "$URL"
+            chmod +x /usr/local/bin/websocat
+            ;;
+    esac
+    
+    if command -v websocat &> /dev/null; then
+        echo "websocat 安装成功"
+    else
+        echo "websocat 安装失败"
+        exit 1
+    fi
+}
 
-# 创建部署目录
+install_tools() {
+    if ! command -v wget &> /dev/null && ! command -v curl &> /dev/null; then
+        if command -v apt &> /dev/null; then
+            apt update && apt install -y wget
+        elif command -v yum &> /dev/null; then
+            yum install -y wget
+        elif command -v apk &> /dev/null; then
+            apk add --no-cache wget
+        fi
+    fi
+}
+
+install_tools
+install_websocat
+
 mkdir -p /opt/vps-reporter
 cd /opt/vps-reporter
 
-# 写入上报脚本
 cat > reporter.sh << 'INNER_EOF'
 #!/bin/bash
-INTERVAL=1
-WORKER_URL="${workerUrl}"
+WS_URL="${wsUrl}"
 TOKEN="${token}"
+INTERVAL=1
+MAX_MESSAGES=300
 
 # 自动检测活动的网络接口（排除 lo）
 get_active_interface() {
@@ -1927,7 +2071,6 @@ CACHED_OS=""
 
 # 获取操作系统名称和架构
 get_os_info() {
-    # 获取操作系统名称
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS_NAME="$PRETTY_NAME"
@@ -1939,7 +2082,6 @@ get_os_info() {
         OS_NAME="Unknown"
     fi
     
-    # 获取芯片架构
     ARCH=$(uname -m)
     case "$ARCH" in
         x86_64)  ARCH="amd64" ;;
@@ -1949,7 +2091,6 @@ get_os_info() {
         *)       ARCH="$ARCH" ;;
     esac
     
-    # 简化显示：只取主要发行版名称
     OS_SIMPLE=$(echo "$OS_NAME" | awk '{print $1}')
     echo "$OS_SIMPLE / $ARCH"
 }
@@ -2034,67 +2175,65 @@ get_uptime() {
     awk '{print int($1)}' /proc/uptime
 }
 
-# 第一次读取流量值，用于速度计算
-CURRENT_STATS=($(get_network_stats))
-LAST_RX=\${CURRENT_STATS[0]}
-LAST_TX=\${CURRENT_STATS[1]}
-
-while true; do
-    # 获取当前流量和开机时间
-    CURRENT_STATS=($(get_network_stats))
-    CURRENT_RX=\${CURRENT_STATS[0]}
-    CURRENT_TX=\${CURRENT_STATS[1]}
-    CURRENT_UPTIME=$(get_uptime)
-    CURRENT_TIME=$(date +%s)
-
-    # 计算速度 (B/s)
-    TIME_DIFF=$((CURRENT_TIME - LAST_TIME))
-    if [ $TIME_DIFF -gt 0 ]; then
-        RX_SPEED=$(( (CURRENT_RX - LAST_RX) / TIME_DIFF ))
-        TX_SPEED=$(( (CURRENT_TX - LAST_TX) / TIME_DIFF ))
-    else
-        RX_SPEED=0
-        TX_SPEED=0
-    fi
-
-    # 更新上次值
-    LAST_RX=$CURRENT_RX
-    LAST_TX=$CURRENT_TX
-    LAST_TIME=$CURRENT_TIME
-
-    # 获取 CPU、内存、磁盘
-    cpu=$(get_cpu)
-    mem_data=$(get_memory)
-    mem_percent=$(echo "$mem_data" | awk '{print $1}')
-    mem_total_gb=$(echo "$mem_data" | awk '{print $2}')
-    disk_data=$(get_disk)
-    disk_percent=$(echo "$disk_data" | awk '{print $1}')
-    disk_total_gb=$(echo "$disk_data" | awk '{print $2}')
+# 发送数据的函数
+send_data() {
+    local count=0
+    local ws_url="$1"
+    local token="$2"
     
-    # 获取 OS 信息（每分钟更新一次，减少开销）
-    if [ -z "$CACHED_OS" ] || [ $((SECONDS % 60)) -eq 0 ]; then
-        CACHED_OS=$(get_os_info)
-    fi
+    # 使用 for 循环发送指定次数
+    for ((i=1; i<=$MAX_MESSAGES; i++)); do
+        # 获取当前流量和开机时间
+        CURRENT_STATS=($(get_network_stats))
+        CURRENT_RX=\${CURRENT_STATS[0]}
+        CURRENT_TX=\${CURRENT_STATS[1]}
+        CURRENT_UPTIME=$(get_uptime)
+        CURRENT_TIME=$(date +%s)
 
-    payload=$(cat <<EOF
-{
-    "token": "$TOKEN",
-    "cpu": $cpu,
-    "memory": $mem_percent,
-    "disk": $disk_percent,
-    "memory_total": $mem_total_gb,
-    "disk_total": $disk_total_gb,
-    "network_rx_bytes": $CURRENT_RX,
-    "network_tx_bytes": $CURRENT_TX,
-    "network_rx_speed": $RX_SPEED,
-    "network_tx_speed": $TX_SPEED,
-    "uptime_seconds": $CURRENT_UPTIME,
-    "os": "$CACHED_OS"
+        # 计算速度
+        TIME_DIFF=$((CURRENT_TIME - LAST_TIME))
+        if [ $TIME_DIFF -gt 0 ]; then
+            RX_SPEED=$(( (CURRENT_RX - LAST_RX) / TIME_DIFF ))
+            TX_SPEED=$(( (CURRENT_TX - LAST_TX) / TIME_DIFF ))
+        else
+            RX_SPEED=0
+            TX_SPEED=0
+        fi
+
+        LAST_RX=$CURRENT_RX
+        LAST_TX=$CURRENT_TX
+        LAST_TIME=$CURRENT_TIME
+
+        # 获取各项指标
+        cpu=$(get_cpu)
+        mem_data=$(get_memory)
+        mem_percent=$(echo "$mem_data" | awk '{print $1}')
+        mem_total_gb=$(echo "$mem_data" | awk '{print $2}')
+        disk_data=$(get_disk)
+        disk_percent=$(echo "$disk_data" | awk '{print $1}')
+        disk_total_gb=$(echo "$disk_data" | awk '{print $2}')
+        
+        if [ -z "$CACHED_OS" ] || [ $((SECONDS % 60)) -eq 0 ]; then
+            CACHED_OS=$(get_os_info)
+        fi
+
+        # 构建 JSON（单行）
+        payload="{\\\"token\\\":\\\"$token\\\",\\\"cpu\\\":$cpu,\\\"memory\\\":$mem_percent,\\\"disk\\\":$disk_percent,\\\"memory_total\\\":$mem_total_gb,\\\"disk_total\\\":$disk_total_gb,\\\"network_rx_bytes\\\":$CURRENT_RX,\\\"network_tx_bytes\\\":$CURRENT_TX,\\\"network_rx_speed\\\":$RX_SPEED,\\\"network_tx_speed\\\":$TX_SPEED,\\\"uptime_seconds\\\":$CURRENT_UPTIME,\\\"os\\\":\\\"$CACHED_OS\\\"}"
+        
+        echo "$payload"
+        
+        # 最后一次发送后不再 sleep，直接结束
+        if [ $i -lt $MAX_MESSAGES ]; then
+            sleep $INTERVAL
+        fi
+    done
 }
-EOF
-)
 
-    curl -X POST "$WORKER_URL" -H "Content-Type: application/json" -d "$payload" -s -o /dev/null
+# 主循环：不断重建连接
+while true; do
+    echo "$(date): 建立 WebSocket 连接，将发送 \${MAX_MESSAGES} 次数据..."
+    send_data "$WS_URL" "$TOKEN" | websocat -v "$WS_URL"
+    echo "$(date): 连接关闭，$INTERVAL秒后重建..."
     sleep $INTERVAL
 done
 INNER_EOF
@@ -2104,7 +2243,7 @@ chmod +x reporter.sh
 # 创建 systemd 服务
 cat > /etc/systemd/system/vps-reporter.service << 'SERVICE_EOF'
 [Unit]
-Description=VPS Reporter (curl+sh)
+Description=VPS Reporter (WebSocket)
 After=network.target
 
 [Service]
@@ -2124,9 +2263,8 @@ systemctl enable vps-reporter
 systemctl restart vps-reporter
 
 echo "========================================="
-echo "上报服务已部署！"
+echo "vps-reporter 上报服务已部署！"
 echo "查看日志: journalctl -u vps-reporter -f"
-echo "测试上报: curl -X POST ${workerUrl} -H 'Content-Type: application/json' -d '{\"token\":\"${token}\",\"cpu\":10,\"memory\":20,\"disk\":30,\"memory_total\":0.5,\"disk_total\":10,\"network_rx_bytes\":1000,\"network_tx_bytes\":2000,\"network_rx_speed\":100,\"network_tx_speed\":200,\"uptime_seconds\":3600,\"os\":\"Debian/amd64\"}'"
 echo "========================================="
 `;
 
@@ -2138,21 +2276,84 @@ echo "========================================="
   });
 }
 
-async function handleReport(request, env) {
-  try {
-    const { token, cpu, memory, disk, memory_total, disk_total, network_rx_bytes, network_tx_bytes,
-            network_rx_speed, network_tx_speed, uptime_seconds, os } = await request.json();
+async function handleWebSocket(request, env, ctx) {
+  const webSocketPair = new WebSocketPair();
+  const [client, server] = Object.values(webSocketPair);
 
+  server.accept();
+
+  const url = new URL(request.url);
+  const token = url.searchParams.get('token');
+  const countryCode = request.cf?.country || 'unknown';
+
+  if (!token) {
+    server.close(1008, 'Missing token');
+    return new Response(null, { status: 401 });
+  }
+
+  let nodeId;
+  try {
     const node = await env.DB.prepare('SELECT id FROM vps_nodes WHERE token = ?').bind(token).first();
     if (!node) {
-      return new Response(JSON.stringify({ error: '无效的 token' }), { status: 401 });
+      server.close(1008, 'Invalid token');
+      return new Response(null, { status: 401 });
     }
+    nodeId = node.id;
+  } catch (err) {
+    console.error('数据库验证失败:', err);
+    server.close(1011, 'Internal error');
+    return new Response(null, { status: 500 });
+  }
 
-    // 获取请求的 IP 和国家代码
-    const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || 'unknown';
-    const countryCode = request.cf?.country || 'unknown';
+  console.log(`WebSocket 连接建立: 节点 ${nodeId}`);
+
+  // 标记连接是否已关闭，避免重复操作
+  let isClosed = false;
+
+  // 处理消息
+  server.addEventListener('message', async (event) => {
+    if (isClosed) return;
+    try {
+        const data = JSON.parse(event.data);
+
+        // 使用 ctx.waitUntil 将数据库操作移到后台
+        ctx.waitUntil(updateNodeData(env, nodeId, data, countryCode));
+
+        // 立即返回成功响应
+        if (!isClosed) {
+        server.send(JSON.stringify({ success: true }));
+        }
+    } catch (err) {
+      console.error('处理消息错误:', err);
+      if (!isClosed) {
+        server.send(JSON.stringify({ error: err.message }));
+      }
+    }
+  });
+
+  // 关闭处理：主动关闭服务端连接，并标记已关闭
+  server.addEventListener('close', (event) => {
+    console.log(`WebSocket 关闭: 节点 ${nodeId}, 代码: ${event.code}`);
+    isClosed = true;
+    // 关键：主动关闭服务端连接，避免挂起
+    server.close();
+  });
+
+  // 错误处理：同样需要关闭连接
+  server.addEventListener('error', (event) => {
+    const error = event.error || event.message || '未知错误';
+    console.error(`WebSocket 错误: 节点 ${nodeId}`, error);
+    if (!isClosed) {
+      isClosed = true;
+      server.close(1011, 'Internal error');
+    }
+  });
+
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+async function updateNodeData(env, id, data, countryCode) {
     const countryName = getCountryName(countryCode);
-
     const now = new Date().toISOString();
     await env.DB.prepare(`
             UPDATE vps_nodes 
@@ -2172,16 +2373,10 @@ async function handleReport(request, env) {
                 country_code = ?,
                 country_name = ?
             WHERE id = ?
-        `).bind(now, cpu, memory, disk, memory_total, disk_total, network_rx_bytes, network_tx_bytes,
-                network_rx_speed, network_tx_speed, uptime_seconds, os, countryCode, countryName, node.id).run();
-
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
-  } catch (err) {
-    console.error('上报处理错误:', err);
-    return new Response(JSON.stringify({ error: '服务器错误' }), { status: 500 });
-  }
+        `).bind(now, data.cpu, data.memory, data.disk, data.memory_total, 
+                data.disk_total, data.network_rx_bytes, data.network_tx_bytes,
+                data.network_rx_speed, data.network_tx_speed, data.uptime_seconds, 
+                data.os, countryCode, countryName, id).run();
 }
 
 // 国家代码转名称
@@ -2243,14 +2438,4 @@ async function checkHeartbeat(env) {
     SET status = 'offline', cpu_usage = null, memory_usage = null, disk_usage = null
     WHERE last_check < ? AND status = 'online'
   `).bind(threshold).run();
-}
-
-async function initAdminUser(env) {
-    const adminHash = await hashPassword('8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92');
-    await env.DB.prepare(`
-        INSERT INTO users (username, password_hash) 
-        VALUES ('admin', ?)
-        ON CONFLICT(username) DO UPDATE SET password_hash = ?
-    `).bind(adminHash, adminHash).run();
-    return Response.json({result: 'ok'});
 }
