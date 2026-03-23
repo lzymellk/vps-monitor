@@ -1887,7 +1887,7 @@ async function handleNodesStream(request, env) {
 
       sendData();
 
-      // 每 30 秒推送一次更新
+      // 每 2 秒推送一次更新
       intervalId = setInterval(sendData, 2000);
     },
     cancel() {
