@@ -1877,9 +1877,12 @@ async function handleNodesStream(request, env) {
       // 立即发送当前数据
       const sendData = async () => {
         try {
-          const nodes = await getNodes(env);
-          const data = `data: ${JSON.stringify(nodes)}\n\n`;
-          controller.enqueue(encoder.encode(data));
+          // 关键：将数据库操作放到 waitUntil 中，不阻塞流
+          const dataPromise = getNodesData(env);
+          ctx.waitUntil(dataPromise.then((data) => {
+            const message = `data: ${JSON.stringify(data)}\n\n`;
+            controller.enqueue(encoder.encode(message));
+          }));
         } catch (err) {
           console.error('获取节点数据失败:', err);
         }
@@ -1898,7 +1901,7 @@ async function handleNodesStream(request, env) {
   return new Response(stream, { headers });
 }
 
-async function getNodes(env) {
+async function getNodesData(env) {
   return await env.DB.prepare(`
     SELECT id, name, status, os, cpu_usage, memory_usage, disk_usage, memory_total, disk_total,
                network_rx_bytes, network_tx_bytes, network_rx_speed, network_tx_speed, uptime_seconds,
