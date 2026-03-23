@@ -2341,6 +2341,7 @@ async function handleWebSocket(request, env, ctx) {
       console.log(`WebSocket 关闭: 节点 ${nodeId}, 代码: ${event.code}, 原因: ${event.reason}`);
     }
     isClosed = true;
+    server.close(event.code, event.reason);
   });
 
   server.addEventListener('error', (event) => {
