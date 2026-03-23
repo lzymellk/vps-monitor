@@ -1160,7 +1160,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
                             <button type="button" onclick="copyDeployCommand()" class="btn btn-secondary" style="padding: 4px 8px; margin-left: 8px;">复制</button>
                         </div>
                         <div style="font-size: 12px; color: #94a3b8;">
-                            💡 此脚本将安装 Python，创建一个 systemd 服务，每2秒上报 CPU/内存/磁盘使用率。
+                            💡 此脚本将安装 websocat，创建一个 systemd 服务，每2秒上报 CPU/内存/磁盘使用率。
                         </div>
                     </div>
                 </div>
