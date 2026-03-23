@@ -2331,22 +2331,26 @@ async function handleWebSocket(request, env, ctx) {
     }
   });
 
-  // 关闭处理：主动关闭服务端连接，并标记已关闭
   server.addEventListener('close', (event) => {
-    console.log(`WebSocket 关闭: 节点 ${nodeId}, 代码: ${event.code}`);
+    // 1000 正常关闭，1005 客户端主动断开（无关闭帧）
+    if (event.code === 1000) {
+      console.log(`WebSocket 正常关闭: 节点 ${nodeId}`);
+    } else if (event.code === 1005) {
+      console.log(`WebSocket 客户端主动断开 (正常重建): 节点 ${nodeId}`);
+    } else {
+      console.log(`WebSocket 关闭: 节点 ${nodeId}, 代码: ${event.code}, 原因: ${event.reason}`);
+    }
     isClosed = true;
-    // 关键：主动关闭服务端连接，避免挂起
-    server.close();
   });
 
-  // 错误处理：同样需要关闭连接
   server.addEventListener('error', (event) => {
+    // 如果已经关闭，忽略错误
+    if (isClosed) return;
+    
     const error = event.error || event.message || '未知错误';
-    console.error(`WebSocket 错误: 节点 ${nodeId}`, error);
-    if (!isClosed) {
-      isClosed = true;
-      server.close(1011, 'Internal error');
-    }
+    console.error(`WebSocket 错误 (节点 ${nodeId}):`, error);
+    isClosed = true;
+    server.close(1011, String(error));
   });
 
   return new Response(null, { status: 101, webSocket: client });
