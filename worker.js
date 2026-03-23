@@ -1738,7 +1738,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
                 console.error('SSE 连接错误:', err);
                 eventSource.close();
                 // 5秒后重连
-                setTimeout(initSSE, 5000);
+                setTimeout(initSSE, 2000);
             };
         }
 
@@ -1861,6 +1861,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
 
 // API 路由实现
 async function handleNodesStream(request, env) {
+  const maxExecutions = 200;
   // 设置 SSE 响应头
   const headers = {
     'Content-Type': 'text/event-stream',
@@ -1871,12 +1872,23 @@ async function handleNodesStream(request, env) {
 
   const encoder = new TextEncoder();
   let intervalId;
+  let executionCount = 0;
+  let isClosing = false;
 
   const stream = new ReadableStream({
     start(controller) {
       // 立即发送当前数据
       const sendData = async () => {
+        // 检查是否达到最大执行次数
+        if (executionCount >= maxExecutions || isClosing) {
+          if (!isClosing) {
+            console.log(`已达到最大执行次数 ${maxExecutions}，停止推送`);
+            await closeStream(controller, 'completed');
+          }
+          return;
+        }
         try {
+          executionCount++;
           // 关键：将数据库操作放到 waitUntil 中，不阻塞流
           const dataPromise = getNodesData(env);
           ctx.waitUntil(dataPromise.then((data) => {
@@ -1886,6 +1898,33 @@ async function handleNodesStream(request, env) {
         } catch (err) {
           console.error('获取节点数据失败:', err);
         }
+      };
+      const closeStream = async (controller, reason) => {
+        if (isClosing) return;
+        isClosing = true;
+        
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+        
+        // 发送完成事件
+        const completeMessage = `event: complete\ndata: ${JSON.stringify({
+          reason: reason,
+          totalExecutions: executionCount,
+          maxExecutions: maxExecutions,
+          timestamp: new Date().toISOString()
+        })}\n\n`;
+        controller.enqueue(encoder.encode(completeMessage));
+        
+        // 延迟关闭以确保消息被发送
+        setTimeout(() => {
+          try {
+            controller.close();
+          } catch (e) {
+            console.log('流已经关闭');
+          }
+        }, 100);
       };
 
       sendData();
