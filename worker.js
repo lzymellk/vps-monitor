@@ -2047,7 +2047,7 @@ cat > reporter.sh << 'INNER_EOF'
 WS_URL="${wsUrl}"
 TOKEN="${token}"
 INTERVAL=1
-MAX_MESSAGES=300
+MAX_MESSAGES=200
 
 # 自动检测活动的网络接口（排除 lo）
 get_active_interface() {
