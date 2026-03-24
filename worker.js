@@ -1659,20 +1659,20 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
                                     <span class="metric-label">内存</span>
                                     <span class="metric-percent">\${memPercent}%</span>
                                 </div>
-                                \${memoryDetail ? \`<div class="metric-value">\${memoryDetail}</div>\` : ''}
                                 <div class="progress-bar">
                                     <div class="progress-fill \${memColorClass}" style="width: \${memPercent}%"></div>
                                 </div>
+                                <div class="metric-value">\${memoryDetail ? \`\${memoryDetail}\` : '-'}</div>
                             </div>
                             <div class="metric-item">
                                 <div class="metric-header">
                                     <span class="metric-label">磁盘</span>
                                     <span class="metric-percent">\${diskPercent}%</span>
                                 </div>
-                                \${diskDetail ? \`<div class="metric-value">\${diskDetail}</div>\` : ''}
                                 <div class="progress-bar">
                                     <div class="progress-fill \${diskColorClass}" style="width: \${diskPercent}%"></div>
                                 </div>
+                                <div class="metric-value">\${diskDetail ? \`\${diskDetail}\` : '-'}</div>
                             </div>
                             <div class="stat-row">
                                 <span class="stat-label">流量</span>
