@@ -16,7 +16,7 @@ export default {
     } else if (path === '/ws') {
       return handleWebSocket(request, env, ctx);
     } else if (path === '/api/nodes-stream' && method === 'GET') {
-      return handleNodesStream(request, env);
+      return handleNodesStream(request, env, ctx);
     } else if (path === '/api/nodes' && method === 'POST') {
       return handleAddNode(request, env);
     } else if (path.startsWith('/api/nodes/') && method === 'DELETE') {
@@ -1860,7 +1860,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
 }
 
 // API 路由实现
-async function handleNodesStream(request, env) {
+async function handleNodesStream(request, env, ctx) {
   const maxExecutions = 200;
   // 设置 SSE 响应头
   const headers = {
@@ -2090,6 +2090,7 @@ WS_URL="${wsUrl}"
 TOKEN="${token}"
 INTERVAL=1
 MAX_MESSAGES=200
+LOG_FILE="/tmp/websocat.log"
 
 # 自动检测活动的网络接口（排除 lo）
 get_active_interface() {
@@ -2268,13 +2269,17 @@ send_data() {
         if [ $i -lt $MAX_MESSAGES ]; then
             sleep $INTERVAL
         fi
+        if tail -n2 "$LOG_FILE" | grep -qi "error\\|write error\\|closed\\|disconnected\\|failed"; then
+            break
+        fi
     done
 }
 
 # 主循环：不断重建连接
 while true; do
     echo "$(date): 建立 WebSocket 连接，将发送 \${MAX_MESSAGES} 次数据..."
-    send_data "$WS_URL" "$TOKEN" | websocat -v "$WS_URL"
+    > "$LOG_FILE"
+    send_data "$WS_URL" "$TOKEN" | websocat -v "$WS_URL" 2>&1 | tee -a "$LOG_FILE"
     echo "$(date): 连接关闭，$INTERVAL秒后重建..."
     sleep $INTERVAL
 done
@@ -2363,7 +2368,7 @@ async function handleWebSocket(request, env, ctx) {
 
         // 立即返回成功响应
         if (!isClosed) {
-        server.send(JSON.stringify({ success: true }));
+            server.send(JSON.stringify({ success: true }));
         }
     } catch (err) {
       console.error('处理消息错误:', err);
