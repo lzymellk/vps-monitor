@@ -2269,7 +2269,7 @@ send_data() {
         if [ $i -lt $MAX_MESSAGES ]; then
             sleep $INTERVAL
         fi
-        if tail -n2 "$LOG_FILE" | grep -qi "error\\|write error\\|closed\\|disconnected\\|failed"; then
+        if tail -n2 "$LOG_FILE" | grep -qi "error\\|closed\\|disconnected\\|failure\\|failed"; then
             break
         fi
     done
