@@ -1737,7 +1737,7 @@ function generateDashboardHTML(isLoggedIn, username, nodesData) {
             eventSource.onerror = (err) => {
                 console.error('SSE 连接错误:', err);
                 eventSource.close();
-                // 5秒后重连
+                // 2秒后重连
                 setTimeout(initSSE, 2000);
             };
         }
@@ -2269,10 +2269,11 @@ send_data() {
         if [ $i -lt $MAX_MESSAGES ]; then
             sleep $INTERVAL
         fi
-        if tail -n2 "$LOG_FILE" | grep -qi "error\\|closed\\|disconnected\\|failure\\|failed"; then
+        if tail -n2 "$LOG_FILE" | grep -qi "error\\|closed\\|disconnected\\|failure\\|failed\\|finished"; then
             break
         fi
     done
+    echo '{"type":"close"}'
 }
 
 # 主循环：不断重建连接
@@ -2361,15 +2362,20 @@ async function handleWebSocket(request, env, ctx) {
   server.addEventListener('message', async (event) => {
     if (isClosed) return;
     try {
-        const data = JSON.parse(event.data);
+      const data = JSON.parse(event.data);
+      if (data.type === 'close') {
+        isClosed = true;
+        server.close(1000, 'Client requested close');
+        return;
+      }
 
-        // 使用 ctx.waitUntil 将数据库操作移到后台
-        ctx.waitUntil(updateNodeData(env, nodeId, data, countryCode));
+      // 使用 ctx.waitUntil 将数据库操作移到后台
+      ctx.waitUntil(updateNodeData(env, nodeId, data, countryCode));
 
-        // 立即返回成功响应
-        if (!isClosed) {
-            server.send(JSON.stringify({ success: true }));
-        }
+      // 立即返回成功响应
+      if (!isClosed) {
+        server.send(JSON.stringify({ success: true }));
+      }
     } catch (err) {
       console.error('处理消息错误:', err);
       if (!isClosed) {
@@ -2382,7 +2388,7 @@ async function handleWebSocket(request, env, ctx) {
     // 1000 正常关闭，1005 客户端主动断开（无关闭帧）
     if (event.code === 1000) {
       console.log(`WebSocket 正常关闭: 节点 ${nodeId}`);
-    } else if (event.code === 1005) {
+    } else if (event.code === 1005 || event.code === 1006) {
       console.log(`WebSocket 客户端主动断开 (正常重建): 节点 ${nodeId}`);
     } else {
       console.log(`WebSocket 关闭: 节点 ${nodeId}, 代码: ${event.code}, 原因: ${event.reason}`);
